@@ -5,7 +5,9 @@
   "author": "hive-uoft <hive.init.hive@gmail.com>",
   "main": "functions/__main__.js",
   "dependencies": {
-    "oauth": "^0.9.15"
+    "geopoint": "^1.0.1",
+    "oauth": "^0.9.15",
+    "twit": "^2.2.9"
   },
   "private": true,
   "stdlib": {
