@@ -13,6 +13,13 @@ module.exports = async (search = 'Toronto, ON', context) => {
   return {
     temperature: globalTemperature(+weather.current.temperature),
     feelsLike: globalTemperature(+weather.current.feelslike),
+    forecast: weather.forecast.map(day => ({
+      low: globalTemperature(+day.low),
+      hight: globalTemperature(+day.high),
+      description: day.skytestday,
+      date: day.date,
+      day: day.day,
+    })),
   };
 };
 
