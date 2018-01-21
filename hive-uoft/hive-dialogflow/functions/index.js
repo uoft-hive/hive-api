@@ -27,6 +27,7 @@ const intents = {
     LOCATION: 'get_location',
     SWITCH: 'switch_hive',
     CURRENT: 'current_hive',
+    DELETE: 'delete_hive',
   },
   CONTACT: {
     CALL: 'call_contact',
@@ -79,7 +80,7 @@ function Hive(request, response) {
           }`
         );
       } else {
-        app.ask(`We flew into ${group_noun} ${toHive.name}`);
+        app.ask(`We flew into ${group_noun} ${hive.name}`);
       }
     });
   }
@@ -221,12 +222,13 @@ function Hive(request, response) {
     console.log('LIST HIVES');
   }
   function accessHive(app) {
-    console.log(
-      'access hive - hive_category:',
-      app.getArgument('hive_category')
-    );
-    console.log('ACCESS HIVE');
-    app.tell('You Did It');
+    const toHive = app.getArgument('hive_category');
+    const group_noun = app.getArgument('hive') || 'Hive';
+    DB.getHive(toHive || 'friends', hive => {
+      console.log('got hive', hive);
+      app.data.currentHive = hive;
+      app.ask(`We flew into ${group_noun} ${hive.name || 'friends'}`);
+    });
   }
 }
 function createBee(req, res) {}
@@ -271,14 +273,13 @@ class DB {
   static getHive(name, callback) {
     const ref = admin.database().ref('/hives');
     ref
-      .once('value')
+      .once('name')
       .then(snapshot => {
         let found = 0;
         snapshot.forEach(hive => {
           console.log('hivesnap', hive);
           const h = hive.val();
-          console.log('hivedata', h);
-          if (h.name === name && found === 0) {
+          if (found === 0) {
             found = 1;
             console.log('hive found with name', name);
             return callback(null, h);
