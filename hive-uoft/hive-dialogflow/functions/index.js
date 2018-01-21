@@ -9,13 +9,13 @@ process.env.DEBUG = 'actions-on-google:*';
 const hives = ['hive1', 'hive2', 'hive3', 'hive4'];
 
 const intents = {
-  PERMISSION: 'request_permissions', // 0
+  PERMISSION: 'request_permissions',
   ZERO: 'before_welcome',
-  WELCOME: 'input.welcome', // 2
+  WELCOME: 'input.welcome',
   CLOSE: 'say_bye',
   UNKNOWN: 'input.unknown',
   USER: {
-    INIT: 'init_user', // 1
+    INIT: 'init_user',
     NEWS: 'get_news',
     TIMEZONE: 'get_timezone',
     WEATHER: 'get_weather',
@@ -26,6 +26,7 @@ const intents = {
     CREATE: 'create_hive',
     LOCATION: 'get_location',
     SWITCH: 'switch_hive',
+    CURRENT: 'current_hive',
   },
   CONTACT: {
     CALL: 'call_contact',
@@ -45,12 +46,84 @@ function Hive(request, response) {
   map.set(intents.PERMISSION, askForPermissions);
   map.set(intents.USER.INIT, initUser);
   map.set(intents.WELCOME, welcome);
+
   map.set(intents.HIVE.CREATE, createHive);
+  map.set(intents.HIVE.CURRENT, currentHive);
+  map.set(intents.HIVE.SWITCH, switchHive);
+  map.set(intents.HIVE.ACCESS, accessHive);
 
   hive.handleRequest(map);
 
+  function switchHive(app) {
+    const group_noun = app.getArgument('hive') || 'Hive';
+    const toHive = app.getArgument('hive_category');
+    if (!group_noun) {
+      app.ask(Responses.UnknownGroup());
+      return;
+    }
+    if (!toHive) {
+      app.ask(Responses.NoHiveCategory());
+      return;
+    }
+    console.log(`toHive: ${toHive}`);
+    console.log('preparing to read from database');
+    const fromHive = app.data.currentHive;
+    console.log('fromHive is', fromHive);
+    DB.getHive(toHive || 'friends', hive => {
+      console.log('got hive', hive);
+      app.data.currentHive = hive;
+      if (fromHive) {
+        app.ask(
+          `Switched from ${group_noun} ${fromHive.name} to ${group_noun} ${
+            toHive.name
+          }`
+        );
+      } else {
+        app.ask(`We flew into ${group_noun} ${toHive.name}`);
+      }
+    });
+  }
+  function currentHive(app) {
+    if (app.data.hive && app.data.currentHive && app.data.currentHive.name) {
+      app.ask(
+        `The currently in the ${
+          app.data.hive.currentHive.name
+        } hive. Buzz Buzz!`
+      );
+    } else {
+      app.ask(`You are not currently in a hive. Please select a hive.`);
+    }
+  }
   function createHive(app) {
-    console.log('create hive');
+    console.log(app.data);
+    const group_noun = app.getArgument('hive');
+    if (!group_noun) {
+      app.ask(`Sorry! We didn't catch that. Try again?`);
+      return;
+    }
+    const hive_name = app.getArgument('hive_category');
+    if (!hive_name) {
+      app.ask(Responses.NoHiveCategory());
+    }
+    const queenBee = app.data.user;
+    if (!queenBee) {
+      app.ask(`Sorry, we couldn't find your info. Try logging in again`);
+      return;
+    }
+    DB.addHive(hive_name, queenBee, (err, snapshot) => {
+      if (err) {
+        app.ask(
+          `Sorry, we couldn't create the hive. The name has already been taken`
+        );
+        return;
+      }
+      app.data.hive.currentHive = snapshot;
+      app.ask(
+        `Created the ${app.getArgument('hive')} ${app.getArgument(
+          'hive_category'
+        )}. Add members from your contacts`
+      );
+    });
   }
   function getTimeZone(app) {
     // name
@@ -100,13 +173,20 @@ function Hive(request, response) {
         const display = app.getUserName().displayName;
         const location = app.getDeviceLocation().coordinates;
 
-        DB.addUser({
-          name: display,
-          location: location,
-        });
+        DB.addUser(
+          {
+            name: display,
+            location: location,
+          },
+          user => {
+            app.data.user = user;
+            app.data.colony = {
+              hive: user.hives,
+            };
+          }
+        );
 
         app.data.user = { name: display, location: location };
-
         app.data.colony = {
           hive: hives,
           currentHive: {
@@ -114,12 +194,11 @@ function Hive(request, response) {
             queen: { name: 'queen', location: { lat: 10, long: 20 } },
           },
         };
-        app.setArgument('username', display);
       } catch (e) {
         console.log(e);
       }
       app.ask(
-        'Thanks! Setting you up with Hive! Say "Go to my Colony" to get started.'
+        'Thanks! Setting you up with Hive! Try "Go to my Colony" to get started.'
       );
     } else {
       app.tell('Bye');
@@ -142,7 +221,12 @@ function Hive(request, response) {
     console.log('LIST HIVES');
   }
   function accessHive(app) {
+    console.log(
+      'access hive - hive_category:',
+      app.getArgument('hive_category')
+    );
     console.log('ACCESS HIVE');
+    app.tell('You Did It');
   }
 }
 function createBee(req, res) {}
@@ -152,21 +236,78 @@ function listHives(req, res) {
     hives: hives,
   });
 }
+class Responses {
+  static NoGroupName() {
+    return `Sorry! We didn't catch that. Try again?`;
+  }
+  static NoHiveCategory() {
+    return `Sorry! We couldn't figure out the hive name`;
+  }
+}
 class DB {
-  static addUser({ name, location }) {
-    // TODO: add if not exists
+  static addHive(name, queen, callback) {
+    // TODO: add only if not exists
+    admin
+      .database()
+      .ref('/hives')
+      .push({
+        name: name,
+        queen: queen,
+        bees: [],
+        created: new Date(),
+        updated: new Date(),
+      })
+      .then(snapshot => {
+        console.log(snapshot);
+        callback(null, snapshot);
+        return snapshot.key;
+      })
+      .catch(err => {
+        console.log(err);
+        callback(err, null);
+        return console.log(err);
+      });
+  }
+  static getHive(name, callback) {
+    const ref = admin.database().ref('/hives');
+    ref
+      .once('value')
+      .then(snapshot => {
+        let found = 0;
+        snapshot.forEach(hive => {
+          console.log('hivesnap', hive);
+          const h = hive.val();
+          console.log('hivedata', h);
+          if (h.name === name && found === 0) {
+            found = 1;
+            console.log('hive found with name', name);
+            return callback(null, h);
+          }
+          return h;
+        });
+        return;
+      })
+      .catch(e => console.log(e));
+  }
+  static addUser({ name, location }, callback) {
+    // TODO: add only if not exists
     admin
       .database()
       .ref('/bees')
       .push({
         name,
         location,
+        queenOf: [],
+        memberOf: [],
       })
       .then(snapshot => {
-        console.log('ADDED USER ????');
+        callback(null, snapshot.data());
         return snapshot;
       })
-      .catch(err => console.log(err));
+      .catch(err => {
+        callback(err, null);
+        return console.log(err);
+      });
   }
 } /*
 // function addUser(req, res) {
@@ -190,4 +331,14 @@ class DB {
 //     })
 //     .catch(err => console.log(err));
 // }
+// var hivesRef = firebase.database().ref('/hives');
+//  var newHive = hivesRef.push();
+//  newMessageRef.set({
+//    name: name,
+//    queen: queen,
+//    bees: [],
+//    created: new Date(),
+//    updated: new Date(),
+//  });
+  //  Checking how those important to you are doing in $hive_category
 */
