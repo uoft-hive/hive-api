@@ -3,38 +3,25 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const App = require('actions-on-google').DialogflowApp;
 
+const intents = require('./intents');
+
 admin.initializeApp(functions.config().firebase);
 
 process.env.DEBUG = 'actions-on-google:*';
-const hives = ['hive1', 'hive2', 'hive3', 'hive4'];
 
-const intents = {
-  PERMISSION: 'request_permissions',
-  ZERO: 'before_welcome',
-  WELCOME: 'input.welcome',
-  CLOSE: 'say_bye',
-  UNKNOWN: 'input.unknown',
-  USER: {
-    INIT: 'init_user',
-    NEWS: 'get_news',
-    TIMEZONE: 'get_timezone',
-    WEATHER: 'get_weather',
-  },
-  HIVE: {
-    LIST: 'list_hive',
-    ACCESS: 'access_hive',
-    CREATE: 'create_hive',
-    LOCATION: 'get_location',
-    SWITCH: 'switch_hive',
-    CURRENT: 'current_hive',
-    DELETE: 'delete_hive',
-  },
-  CONTACT: {
-    CALL: 'call_contact',
-    ADD: 'add_contact',
-    DELETE: 'delete_contact',
-  },
-};
+/*
+ * NOTE: Temporary
+ * We'll do all the changes with a local state (no DB).
+ * This is volatile memory if I understand how firebase functions work.
+ * There's no garuantee that state is preserved when calling the function twice.
+ *
+ * Anyway, as soon as the Google Assistant workflow works _completely_ with the
+ * current `hives` and `users` array, I'll be adding DB functionality ...
+ * going to look into moving it to a relational database, since the data aligns
+ * nicely with one, but will initially do it on Firebase's NoSQL DB.
+ */
+let hives = [];
+let users = [];
 
 exports.listHives = functions.https.onRequest(listHives);
 exports.Hive = functions.https.onRequest(Hive);
@@ -56,33 +43,34 @@ function Hive(request, response) {
   hive.handleRequest(map);
 
   function switchHive(app) {
-    const group_noun = app.getArgument('hive') || 'Hive';
-    const toHive = app.getArgument('hive_category');
-    if (!group_noun) {
-      app.ask(Responses.UnknownGroup());
-      return;
-    }
-    if (!toHive) {
-      app.ask(Responses.NoHiveCategory());
-      return;
-    }
-    console.log(`toHive: ${toHive}`);
-    console.log('preparing to read from database');
+    const userHiveNoun = app.getArgument('hive') || 'Hive';
+    const toHiveName = app.getArgument('hive_category');
+
+    if (!valid(group_noun, toHive)) return;
+
     const fromHive = app.data.currentHive;
-    console.log('fromHive is', fromHive);
-    DB.getHive(toHive || 'friends', hive => {
-      console.log('got hive', hive);
-      app.data.currentHive = hive;
-      if (fromHive) {
-        app.ask(
-          `Switched from ${group_noun} ${fromHive.name} to ${group_noun} ${
-            toHive.name
-          }`
-        );
-      } else {
-        app.ask(`We flew into ${group_noun} ${hive.name}`);
+
+    const toHive = hives.find(hive => hive.name === toHiveName);
+    if (!toHive) return app.ask(`Could not find ${userHiveNoun} ${toHiveName}`);
+
+    app.data.currentHive = toHive;
+    app.ask(
+      `Switched from ${userHiveNoun} ${fromHive.name} to ${userHiveNoun} ${
+        toHive.name
+      }`
+    );
+
+    function valid(group_noun, toHive) {
+      if (!group_noun) {
+        app.ask(Responses.UnknownGroup());
+        return false;
       }
-    });
+      if (!toHive) {
+        app.ask(Responses.NoHiveCategory());
+        return false;
+      }
+      return true;
+    }
   }
   function currentHive(app) {
     if (app.data.hive && app.data.currentHive && app.data.currentHive.name) {
@@ -165,7 +153,7 @@ function Hive(request, response) {
   }
   function welcome(app) {
     // maybe get user info, prompt for hive
-    console.log('welcome 😀 ');
+    console.log('welcome :)');
   }
   function initUser(app) {
     console.log('ADDING USER');
@@ -177,12 +165,12 @@ function Hive(request, response) {
         DB.addUser(
           {
             name: display,
-            location: location,
+            location: location
           },
           user => {
             app.data.user = user;
             app.data.colony = {
-              hive: user.hives,
+              hive: user.hives
             };
           }
         );
@@ -192,8 +180,8 @@ function Hive(request, response) {
           hive: hives,
           currentHive: {
             bees: [{ name: 'hello', location: { lat: 10, long: 20 } }],
-            queen: { name: 'queen', location: { lat: 10, long: 20 } },
-          },
+            queen: { name: 'queen', location: { lat: 10, long: 20 } }
+          }
         };
       } catch (e) {
         console.log(e);
@@ -208,10 +196,10 @@ function Hive(request, response) {
   function askForPermissions(app) {
     console.log('asking for permission :)');
 
-    app.askForPermissions('To talk to your hive', [
-      app.SupportedPermissions.NAME,
-      app.SupportedPermissions.DEVICE_PRECISE_LOCATION,
-    ]);
+    // app.askForPermissions('To talk to your hive', [
+    //   app.SupportedPermissions.NAME,
+    //   app.SupportedPermissions.DEVICE_PRECISE_LOCATION,
+    // ]);
 
     console.log('asked for permission');
   }
@@ -235,10 +223,11 @@ function createBee(req, res) {}
 function listHives(req, res) {
   res.send({
     user: 'username',
-    hives: hives,
+    hives: hives
   });
 }
 class Responses {
+  // TODO: rework to take in an arg
   static NoGroupName() {
     return `Sorry! We didn't catch that. Try again?`;
   }
@@ -257,7 +246,7 @@ class DB {
         queen: queen,
         bees: [],
         created: new Date(),
-        updated: new Date(),
+        updated: new Date()
       })
       .then(snapshot => {
         console.log(snapshot);
@@ -295,12 +284,8 @@ class DB {
     admin
       .database()
       .ref('/bees')
-      .push({
-        name,
-        location,
-        queenOf: [],
-        memberOf: [],
-      })
+      .push({ queenOf: [], memberOf: [], name, location })
+
       .then(snapshot => {
         callback(null, snapshot.data());
         return snapshot;
@@ -310,36 +295,4 @@ class DB {
         return console.log(err);
       });
   }
-} /*
-// function addUser(req, res) {
-//   console.log(req);
-//   const name = req.query.name;
-//   const location = req.query.location;
-//   admin
-//     .database()
-//     .ref('/bees')
-//     .push({
-//       name: 'isthisnagee@gmail.com',
-//       location: {
-//         lat: 43.6532,
-//         long: -79.383,
-//       },
-//     })
-//     .then(snapshot => {
-//       // Redirect with 303 SEE OTHER to the URL of the pushed object in the Firebase console.
-//       res.redirect(303, snapshot.ref);
-//       return snapshot;
-//     })
-//     .catch(err => console.log(err));
-// }
-// var hivesRef = firebase.database().ref('/hives');
-//  var newHive = hivesRef.push();
-//  newMessageRef.set({
-//    name: name,
-//    queen: queen,
-//    bees: [],
-//    created: new Date(),
-//    updated: new Date(),
-//  });
-  //  Checking how those important to you are doing in $hive_category
-*/
+}
